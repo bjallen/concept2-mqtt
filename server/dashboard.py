@@ -21,6 +21,7 @@ LOG_DIR = Path(os.environ.get("LOG_DIR", "./data"))
 HERE = Path(__file__).parent
 ws_clients: set = set()
 _msg_queue: queue.Queue = queue.Queue()
+_latest_battery: dict | None = None
 
 
 # -- MQTT -> WebSocket bridge ------------------------------------------------
@@ -33,9 +34,17 @@ def create_mqtt_client() -> mqtt.Client:
         client.subscribe(MQTT_TOPIC)
 
     def on_message(client, userdata, msg):
+        global _latest_battery
         payload = msg.payload.decode()
         envelope = json.dumps({"topic": msg.topic, "payload": json.loads(payload)
                                 if msg.topic != "concept2/status" else payload})
+
+        # Track latest battery reading
+        if msg.topic == "concept2/battery":
+            try:
+                _latest_battery = json.loads(payload)
+            except json.JSONDecodeError:
+                pass
 
         # Log stroke data to JSONL
         if msg.topic == "concept2/stroke":
@@ -223,6 +232,11 @@ async def summary(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
+async def battery(request: web.Request) -> web.Response:
+    """Return the latest battery reading."""
+    return web.json_response(_latest_battery)
+
+
 # -- App setup ---------------------------------------------------------------
 
 async def start_mqtt(app: web.Application):
@@ -250,6 +264,7 @@ def create_app() -> web.Application:
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/api/history", history)
     app.router.add_get("/api/summary", summary)
+    app.router.add_get("/api/battery", battery)
     app.on_startup.append(start_mqtt)
     app.on_cleanup.append(stop_mqtt)
     return app

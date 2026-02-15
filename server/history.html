@@ -68,6 +68,56 @@
         }
         .back-link:hover { color: var(--accent); }
 
+        .battery {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            color: var(--text-dim);
+        }
+
+        .battery-icon {
+            position: relative;
+            width: 20px;
+            height: 10px;
+            border: 1.5px solid var(--text-dim);
+            border-radius: 2px;
+        }
+
+        .battery-icon::after {
+            content: '';
+            position: absolute;
+            right: -4px;
+            top: 2px;
+            width: 2px;
+            height: 4px;
+            background: var(--text-dim);
+            border-radius: 0 1px 1px 0;
+        }
+
+        .battery-fill {
+            position: absolute;
+            left: 1px;
+            top: 1px;
+            bottom: 1px;
+            border-radius: 1px;
+            background: var(--text-dim);
+            transition: width 0.3s, background 0.3s;
+        }
+
+        .battery.charging .battery-fill { background: #34d399; }
+        .battery.charging .battery-icon { border-color: #34d399; }
+        .battery.charging .battery-icon::after { background: #34d399; }
+        .battery.charging { color: #34d399; }
+
+        .battery.low .battery-fill { background: #f87171; }
+        .battery.low .battery-icon { border-color: #f87171; }
+        .battery.low .battery-icon::after { background: #f87171; }
+        .battery.low { color: #f87171; }
+
+        .hidden { display: none !important; }
+
         .page-title {
             font-family: 'Bebas Neue', Impact, sans-serif;
             font-size: 1.3rem;
@@ -275,7 +325,13 @@
     <div class="page">
         <nav class="nav">
             <a href="/" class="back-link">&larr; LIVE DASHBOARD</a>
-            <h1 class="page-title">TRAINING LOG</h1>
+            <div style="display:flex;align-items:center;gap:1rem;">
+                <div class="battery hidden" id="hBattery">
+                    <div class="battery-icon"><div class="battery-fill" id="hBatteryFill"></div></div>
+                    <span id="hBatteryPct"></span>
+                </div>
+                <h1 class="page-title">TRAINING LOG</h1>
+            </div>
         </nav>
 
         <div class="stats-row">
@@ -683,6 +739,22 @@
             }
         }
 
+        /* ── Battery ── */
+        async function loadBattery() {
+            try {
+                const resp = await fetch('/api/battery');
+                const data = await resp.json();
+                if (!data || data.level == null) return;
+                const wrap = $('hBattery'), fill = $('hBatteryFill'), pct = $('hBatteryPct');
+                wrap.classList.remove('hidden');
+                const level = Math.max(0, Math.min(100, data.level));
+                fill.style.width = (level / 100 * (20 - 4)) + 'px';
+                pct.textContent = Math.round(level) + '%';
+                wrap.classList.toggle('charging', !!data.charging);
+                wrap.classList.toggle('low', level < 20 && !data.charging);
+            } catch (e) { /* ignore */ }
+        }
+
         /* ── Fetch & Render ── */
         async function init() {
             try {
@@ -710,6 +782,7 @@
         });
 
         init();
+        loadBattery();
     })();
     </script>
 </body>

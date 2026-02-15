@@ -137,6 +137,55 @@
             50% { opacity: 0.4; }
         }
 
+        /* Battery indicator */
+        .battery {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            color: var(--text-dim);
+        }
+
+        .battery-icon {
+            position: relative;
+            width: 20px;
+            height: 10px;
+            border: 1.5px solid var(--text-dim);
+            border-radius: 2px;
+        }
+
+        .battery-icon::after {
+            content: '';
+            position: absolute;
+            right: -4px;
+            top: 2px;
+            width: 2px;
+            height: 4px;
+            background: var(--text-dim);
+            border-radius: 0 1px 1px 0;
+        }
+
+        .battery-fill {
+            position: absolute;
+            left: 1px;
+            top: 1px;
+            bottom: 1px;
+            border-radius: 1px;
+            background: var(--text-dim);
+            transition: width 0.3s, background 0.3s;
+        }
+
+        .battery.charging .battery-fill { background: var(--positive); }
+        .battery.charging .battery-icon { border-color: var(--positive); }
+        .battery.charging .battery-icon::after { background: var(--positive); }
+        .battery.charging { color: var(--positive); }
+
+        .battery.low .battery-fill { background: var(--negative); }
+        .battery.low .battery-icon { border-color: var(--negative); }
+        .battery.low .battery-icon::after { background: var(--negative); }
+        .battery.low { color: var(--negative); }
+
         /* ═══════════════════════════ DASHBOARD ═══════════════════════════ */
 
         #dashboard {
@@ -363,6 +412,10 @@
             <span class="dot" id="wDot"></span>
             <span id="wStatus">Connecting&hellip;</span>
         </div>
+        <div class="battery hidden" id="wBattery">
+            <div class="battery-icon"><div class="battery-fill" id="wBatteryFill"></div></div>
+            <span id="wBatteryPct"></span>
+        </div>
         <a href="/history" style="margin-top:1.5rem;font-size:0.75rem;color:var(--text-dim);opacity:0.6;text-decoration:none;letter-spacing:0.1em;">VIEW HISTORY</a>
     </div>
 
@@ -373,7 +426,13 @@
                 <span class="dot online live"></span>
                 <span class="dash-status-label">Live</span>
             </div>
-            <div class="elapsed" id="elapsed">0:00</div>
+            <div style="display:flex;align-items:center;gap:0.75rem;">
+                <div class="battery hidden" id="dBattery">
+                    <div class="battery-icon"><div class="battery-fill" id="dBatteryFill"></div></div>
+                    <span id="dBatteryPct"></span>
+                </div>
+                <div class="elapsed" id="elapsed">0:00</div>
+            </div>
         </div>
 
         <div class="hero">
@@ -452,6 +511,19 @@
             calhr:    $('calhr'),
             chart:    $('chart'),
         };
+
+        /* ── Battery ── */
+        function updateBattery(data) {
+            [['wBattery','wBatteryFill','wBatteryPct'], ['dBattery','dBatteryFill','dBatteryPct']].forEach(([wrap, fill, pct]) => {
+                const wEl = $(wrap), fEl = $(fill), pEl = $(pct);
+                wEl.classList.remove('hidden');
+                const level = Math.max(0, Math.min(100, data.level));
+                fEl.style.width = (level / 100 * (20 - 4)) + 'px';
+                pEl.textContent = Math.round(level) + '%';
+                wEl.classList.toggle('charging', !!data.charging);
+                wEl.classList.toggle('low', level < 20 && !data.charging);
+            });
+        }
 
         /* ── Formatters ── */
         function fmtPace(s) {
@@ -647,6 +719,12 @@
             ws.onmessage = (e) => {
                 let msg;
                 try { msg = JSON.parse(e.data); } catch { return; }
+
+                /* Battery */
+                if (msg.topic === 'concept2/battery') {
+                    updateBattery(msg.payload);
+                    return;
+                }
 
                 /* Status */
                 if (msg.topic === 'concept2/status') {
