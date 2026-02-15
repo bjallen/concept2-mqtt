@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SERVER="${CONCEPT2_SERVER:-mac-mini-server.local}"
-PI="${CONCEPT2_PI:-raspberrypi.local}"
+PI="${CONCEPT2_PI:-pirow.local}"
 PI_USER="${CONCEPT2_PI_USER:-bjallen}"
 SERVER_USER="${1:-$(whoami)}"
 

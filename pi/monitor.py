@@ -4,6 +4,7 @@
 import json
 import os
 import signal
+import socket
 import sys
 import time
 from datetime import datetime, timezone
@@ -20,6 +21,9 @@ POLL_INTERVAL = 0.25  # seconds between reads
 C2_VENDOR_ID = 0x17A4
 C2_PRODUCT_ID = 0x0003
 MIN_FRAME_GAP = 0.050  # minimum gap between USB commands (seconds)
+PISUGAR_HOST = "127.0.0.1"
+PISUGAR_PORT = 8423
+BATTERY_INTERVAL = 60  # seconds between battery reports
 
 # -- HID Erg wrapper ---------------------------------------------------------
 
@@ -103,6 +107,31 @@ class Erg:
         self._dev.close()
 
 
+# -- PiSugar battery ---------------------------------------------------------
+
+def _pisugar_cmd(cmd: str) -> str:
+    """Send a command to the PiSugar server and return the response value."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(2)
+        s.connect((PISUGAR_HOST, PISUGAR_PORT))
+        s.sendall((cmd + "\n").encode())
+        resp = s.recv(256).decode().strip()
+    # Response format: "command: value"
+    return resp.split(":", 1)[1].strip() if ":" in resp else resp
+
+
+def get_battery_status() -> dict | None:
+    """Read battery info from PiSugar. Returns None on failure."""
+    try:
+        level = float(_pisugar_cmd("get battery"))
+        voltage = float(_pisugar_cmd("get battery_v"))
+        charging = _pisugar_cmd("get battery_charging").lower() == "true"
+        return {"level": round(level, 1), "voltage": round(voltage, 3), "charging": charging}
+    except (OSError, ValueError) as e:
+        print(f"PiSugar read failed: {e}")
+        return None
+
+
 # -- Helpers -----------------------------------------------------------------
 
 def find_erg():
@@ -168,6 +197,7 @@ def main():
     erg = find_erg()
 
     last_state = None
+    last_battery_check = 0.0
 
     while running:
         try:
@@ -218,6 +248,15 @@ def main():
                 f"{msg['watts']:>3.0f}W | "
                 f"HR:{msg['heart_rate']}"
             )
+
+        # Periodic battery status
+        now = time.monotonic()
+        if now - last_battery_check >= BATTERY_INTERVAL:
+            last_battery_check = now
+            battery = get_battery_status()
+            if battery:
+                battery["timestamp"] = datetime.now(timezone.utc).isoformat()
+                client.publish(f"{MQTT_TOPIC_PREFIX}/battery", json.dumps(battery), retain=True)
 
         time.sleep(POLL_INTERVAL)
 
