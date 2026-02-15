@@ -259,8 +259,8 @@ async def stop_mqtt(app: web.Application):
 
 def create_app() -> web.Application:
     app = web.Application()
-    app.router.add_get("/", index)
-    app.router.add_get("/history", history_page)
+    app.router.add_get("/", history_page)
+    app.router.add_get("/live", index)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/api/history", history)
     app.router.add_get("/api/summary", summary)
