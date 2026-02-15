@@ -8,5 +8,26 @@ services:
       - mosquitto_data:/mosquitto/data
     restart: unless-stopped
 
+  dashboard:
+    build: .
+    environment:
+      - MQTT_BROKER=mosquitto
+      - LOG_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    depends_on:
+      - dashboard
+    restart: unless-stopped
+
 volumes:
   mosquitto_data:
