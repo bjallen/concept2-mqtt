@@ -24,8 +24,9 @@ python3 -m venv "$INSTALL_DIR/venv"
 
 # udev rule so pyrow can access the PM5 without root
 cat > /etc/udev/rules.d/99-concept2.rules << 'EOF'
-# Concept2 Performance Monitor
+# Concept2 Performance Monitor — allow non-root access and unbind kernel HID driver
 SUBSYSTEM=="usb", ATTR{idVendor}=="17a4", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="17a4", ATTR{idProduct}=="0003", RUN+="/bin/sh -c 'echo $kernel > /sys/bus/usb/drivers/usbhid/unbind 2>/dev/null || true'"
 EOF
 udevadm control --reload-rules
 
@@ -42,7 +43,8 @@ EnvironmentFile=-/etc/concept2-monitor.env
 ExecStart=${INSTALL_DIR}/venv/bin/python ${INSTALL_DIR}/monitor.py
 Restart=always
 RestartSec=5
-User=${SUDO_USER:-$(whoami)}
+# Runs as root to detach kernel HID driver from USB device
+User=root
 
 [Install]
 WantedBy=multi-user.target

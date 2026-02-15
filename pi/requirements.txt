@@ -1,2 +1,3 @@
 pyrow @ git+https://github.com/droogmic/Py3Row.git
 paho-mqtt>=2.0
+hidapi
