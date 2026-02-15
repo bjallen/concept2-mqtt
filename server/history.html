@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#08080c">
+    <title>Training Log — Concept2</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #08080c;
+            --surface: #0f0f16;
+            --border: #1a1a26;
+            --text: #e8e4df;
+            --text-dim: #5a5670;
+            --accent: #f0913a;
+            --accent-dim: rgba(240, 145, 58, 0.15);
+        }
+
+        html { font-size: 16px; }
+
+        body {
+            font-family: 'Barlow', -apple-system, system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100dvh;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0.4;
+        }
+
+        .page {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 1rem 1.25rem 2rem;
+        }
+
+        /* ── Nav ── */
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 1.25rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1.25rem;
+        }
+
+        .back-link {
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .back-link:hover { color: var(--accent); }
+
+        .page-title {
+            font-family: 'Bebas Neue', Impact, sans-serif;
+            font-size: 1.3rem;
+            letter-spacing: 0.15em;
+            color: var(--text-dim);
+        }
+
+        /* ── Stats row ── */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+
+        .stat {
+            background: var(--surface);
+            padding: 0.8rem 0.5rem;
+            text-align: center;
+        }
+
+        .stat-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+            line-height: 1.2;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stat-lbl {
+            font-size: 0.58rem;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-top: 0.15rem;
+        }
+
+        /* ── Cards ── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .card-title {
+            font-family: 'Bebas Neue', Impact, sans-serif;
+            font-size: 0.9rem;
+            letter-spacing: 0.18em;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+        }
+
+        .chart-body {
+            position: relative;
+            height: 160px;
+        }
+
+        .chart-body canvas {
+            position: absolute;
+            inset: 0;
+        }
+
+        /* ── Calendar ── */
+        .cal-scroll {
+            overflow-x: auto;
+            padding-bottom: 4px;
+        }
+
+        .cal-scroll::-webkit-scrollbar { height: 4px; }
+        .cal-scroll::-webkit-scrollbar-track { background: transparent; }
+        .cal-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .cal-body {
+            display: flex;
+            gap: 4px;
+            min-width: min-content;
+        }
+
+        .cal-day-labels {
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            padding-top: 18px;
+        }
+
+        .cal-day-labels span {
+            font-size: 9px;
+            font-weight: 500;
+            color: var(--text-dim);
+            text-align: right;
+            width: 24px;
+            line-height: 1;
+        }
+
+        .cal-main {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .cal-months {
+            display: flex;
+            height: 14px;
+            margin-bottom: 2px;
+            position: relative;
+        }
+
+        .cal-month-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-dim);
+            letter-spacing: 0.04em;
+            position: absolute;
+            white-space: nowrap;
+        }
+
+        .cal-grid {
+            display: grid;
+            grid-template-rows: repeat(7, 1fr);
+            grid-auto-flow: column;
+        }
+
+        .cal-cell {
+            border-radius: 2px;
+            background: rgba(255,255,255,0.03);
+        }
+
+        .cal-cell:hover {
+            outline: 1px solid rgba(255,255,255,0.2);
+            outline-offset: -1px;
+        }
+
+        .cal-cell.future {
+            background: rgba(255,255,255,0.012);
+        }
+
+        /* Legend */
+        .cal-legend {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 0.6rem;
+            justify-content: flex-end;
+        }
+
+        .cal-legend-label {
+            font-size: 9px;
+            color: var(--text-dim);
+            letter-spacing: 0.04em;
+        }
+
+        .cal-legend-cell {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+
+        /* ── Empty state ── */
+        .empty {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        /* ── Entrance ── */
+        @keyframes enter {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .nav { animation: enter 0.4s ease both; }
+        .stats-row { animation: enter 0.4s ease 0.06s both; }
+        .card:nth-of-type(1) { animation: enter 0.4s ease 0.12s both; }
+        .card:nth-of-type(2) { animation: enter 0.4s ease 0.18s both; }
+        .card:nth-of-type(3) { animation: enter 0.4s ease 0.24s both; }
+
+        /* ── Responsive ── */
+        @media (max-width: 480px) {
+            .page { padding: 0.75rem 0.9rem 1.5rem; }
+            .stat-val { font-size: 1.25rem; }
+            .chart-body { height: 130px; }
+            .cal-cell { width: 10px; height: 10px; }
+            .cal-weeks, .cal-week { gap: 2px; }
+            .cal-labels { gap: 2px; padding-top: 16px; }
+            .cal-labels span { height: 10px; line-height: 10px; }
+        }
+
+        @media (min-width: 1024px) {
+            .page { max-width: 800px; }
+            .chart-body { height: 180px; }
+            .stat { padding: 1rem; }
+            .stat-val { font-size: 1.7rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <nav class="nav">
+            <a href="/" class="back-link">&larr; LIVE DASHBOARD</a>
+            <h1 class="page-title">TRAINING LOG</h1>
+        </nav>
+
+        <div class="stats-row">
+            <div class="stat">
+                <div class="stat-val" id="sTotalM">&mdash;</div>
+                <div class="stat-lbl">Total Meters</div>
+            </div>
+            <div class="stat">
+                <div class="stat-val" id="sSessions">&mdash;</div>
+                <div class="stat-lbl">Sessions</div>
+            </div>
+            <div class="stat">
+                <div class="stat-val" id="sStreak">&mdash;</div>
+                <div class="stat-lbl">Day Streak</div>
+            </div>
+        </div>
+
+        <section class="card" id="volumeCard">
+            <h2 class="card-title">Weekly Volume</h2>
+            <div class="chart-body"><canvas id="volumeChart"></canvas></div>
+        </section>
+
+        <section class="card" id="paceCard">
+            <h2 class="card-title">Pace Trend</h2>
+            <div class="chart-body"><canvas id="paceChart"></canvas></div>
+        </section>
+
+        <section class="card" id="calendarCard">
+            <h2 class="card-title">Training Calendar</h2>
+            <div class="cal-scroll">
+                <div class="cal-body">
+                    <div class="cal-day-labels" id="calDayLabels"></div>
+                    <div class="cal-main">
+                        <div class="cal-months" id="calMonths"></div>
+                        <div class="cal-grid" id="calGrid"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="cal-legend">
+                <span class="cal-legend-label">Less</span>
+                <div class="cal-legend-cell" style="background:rgba(255,255,255,0.03)"></div>
+                <div class="cal-legend-cell" style="background:rgba(240,145,58,0.2)"></div>
+                <div class="cal-legend-cell" style="background:rgba(240,145,58,0.45)"></div>
+                <div class="cal-legend-cell" style="background:rgba(240,145,58,0.7)"></div>
+                <div class="cal-legend-cell" style="background:rgba(240,145,58,0.95)"></div>
+                <span class="cal-legend-label">More</span>
+            </div>
+        </section>
+    </div>
+
+    <script>
+    (() => {
+        const $ = id => document.getElementById(id);
+        const WEEKS = 53;
+        const ACCENT = [240, 145, 58];
+        const CAL_GAP = 3;
+        const CAL_MIN_CELL = 8;
+
+        /* ── Helpers ── */
+        function fmtNum(n) { return n.toLocaleString(); }
+
+        function fmtPace(secs) {
+            if (!secs || secs <= 0) return '-:--';
+            const m = Math.floor(secs / 60);
+            const s = Math.floor(secs % 60);
+            return m + ':' + String(s).padStart(2, '0');
+        }
+
+        function mondayOf(d) {
+            const dt = new Date(d);
+            const day = dt.getDay();
+            const diff = day === 0 ? -6 : 1 - day;
+            dt.setDate(dt.getDate() + diff);
+            return dt;
+        }
+
+        function dateStr(d) {
+            return d.getFullYear() + '-' +
+                   String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                   String(d.getDate()).padStart(2, '0');
+        }
+
+        function addDays(d, n) {
+            const r = new Date(d);
+            r.setDate(r.getDate() + n);
+            return r;
+        }
+
+        const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+        /* ── Stats ── */
+        function renderStats(data) {
+            const totalM = data.reduce((s, d) => s + d.total_meters, 0);
+            const totalS = data.reduce((s, d) => s + d.sessions, 0);
+            $('sTotalM').textContent = fmtNum(totalM);
+            $('sSessions').textContent = totalS;
+
+            // Streak
+            const dateSet = new Set(data.map(d => d.date));
+            const today = new Date();
+            const todayStr = dateStr(today);
+            let start = dateSet.has(todayStr) ? 0 : 1;
+            let streak = 0;
+            for (let i = start; i < 365; i++) {
+                if (dateSet.has(dateStr(addDays(today, -i)))) streak++;
+                else break;
+            }
+            $('sStreak').textContent = streak;
+        }
+
+        /* ── Weekly Volume Chart ── */
+        function renderVolume(data) {
+            const canvas = $('volumeChart');
+            const container = canvas.parentElement;
+            const dpr = window.devicePixelRatio || 1;
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+
+            // Group into weeks
+            const weekMap = {};
+            data.forEach(d => {
+                const wk = dateStr(mondayOf(d.date + 'T00:00:00'));
+                weekMap[wk] = (weekMap[wk] || 0) + d.total_meters;
+            });
+
+            // Last 12 weeks
+            const today = new Date();
+            const thisMonday = mondayOf(today);
+            const weeks = [];
+            for (let i = 11; i >= 0; i--) {
+                const mon = addDays(thisMonday, -i * 7);
+                const key = dateStr(mon);
+                weeks.push({ key, meters: weekMap[key] || 0, mon });
+            }
+
+            const maxM = Math.max(...weeks.map(w => w.meters), 1);
+            const padTop = 24;
+            const padBot = 20;
+            const padL = 4;
+            const padR = 4;
+            const chartW = w - padL - padR;
+            const chartH = h - padTop - padBot;
+            const barW = chartW / weeks.length * 0.6;
+            const gap = chartW / weeks.length;
+
+            // Grid lines
+            ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+            ctx.lineWidth = 1;
+            for (let i = 1; i <= 3; i++) {
+                const gy = padTop + chartH * (1 - i / 3);
+                ctx.beginPath();
+                ctx.moveTo(padL, gy);
+                ctx.lineTo(w - padR, gy);
+                ctx.stroke();
+            }
+
+            weeks.forEach((wk, i) => {
+                const x = padL + i * gap + (gap - barW) / 2;
+                const barH = (wk.meters / maxM) * chartH;
+                const y = padTop + chartH - barH;
+                const r = Math.min(3, barW / 2);
+
+                if (wk.meters > 0) {
+                    // Glow
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = 'rgba(240,145,58,0.25)';
+
+                    // Bar with rounded top
+                    ctx.beginPath();
+                    ctx.moveTo(x + r, y);
+                    ctx.arcTo(x + barW, y, x + barW, y + r, r);
+                    ctx.lineTo(x + barW, y + barH);
+                    ctx.lineTo(x, y + barH);
+                    ctx.lineTo(x, y + r);
+                    ctx.arcTo(x, y, x + r, y, r);
+                    ctx.closePath();
+
+                    const grad = ctx.createLinearGradient(0, y, 0, y + barH);
+                    grad.addColorStop(0, 'rgba(240,145,58,0.85)');
+                    grad.addColorStop(1, 'rgba(240,145,58,0.45)');
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+
+                    // Value label
+                    ctx.font = '600 9px "Barlow", sans-serif';
+                    ctx.fillStyle = 'rgba(232,228,223,0.7)';
+                    ctx.textAlign = 'center';
+                    const label = wk.meters >= 1000 ? (wk.meters / 1000).toFixed(1) + 'k' : wk.meters.toString();
+                    ctx.fillText(label, x + barW / 2, y - 5);
+                }
+
+                // Week label
+                ctx.font = '500 8px "Barlow", sans-serif';
+                ctx.fillStyle = 'rgba(90,86,112,0.7)';
+                ctx.textAlign = 'center';
+                const lbl = MONTH_NAMES[wk.mon.getMonth()] + ' ' + wk.mon.getDate();
+                ctx.fillText(lbl, x + barW / 2, h - 5);
+            });
+        }
+
+        /* ── Pace Trend Chart ── */
+        function renderPace(data) {
+            const canvas = $('paceChart');
+            const container = canvas.parentElement;
+            const dpr = window.devicePixelRatio || 1;
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+
+            // Filter to last 90 days with valid pace
+            const cutoff = dateStr(addDays(new Date(), -90));
+            const points = data.filter(d => d.date >= cutoff && d.avg_pace > 0 && d.avg_pace < 600);
+
+            if (points.length < 2) {
+                ctx.font = '500 12px "Barlow", sans-serif';
+                ctx.fillStyle = 'rgba(90,86,112,0.5)';
+                ctx.textAlign = 'center';
+                ctx.fillText('Not enough data yet', w / 2, h / 2);
+                return;
+            }
+
+            const paces = points.map(p => p.avg_pace);
+            const lo = Math.min(...paces);
+            const hi = Math.max(...paces);
+            const pad = Math.max((hi - lo) * 0.2, 5);
+            const yMin = lo - pad;
+            const yMax = hi + pad;
+            const padL = 36;
+            const padR = 8;
+            const padT = 8;
+            const padB = 20;
+            const cw = w - padL - padR;
+            const ch = h - padT - padB;
+
+            // Y axis labels
+            const ySteps = 4;
+            ctx.font = '400 9px "JetBrains Mono", monospace';
+            ctx.fillStyle = 'rgba(90,86,112,0.6)';
+            ctx.textAlign = 'right';
+            for (let i = 0; i <= ySteps; i++) {
+                const paceVal = yMin + (yMax - yMin) * (i / ySteps);
+                const gy = padT + (i / ySteps) * ch;
+                ctx.fillText(fmtPace(paceVal), padL - 6, gy + 3);
+
+                ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(padL, gy);
+                ctx.lineTo(w - padR, gy);
+                ctx.stroke();
+            }
+
+            // Map points
+            const pts = points.map((p, i) => ({
+                x: padL + (i / (points.length - 1)) * cw,
+                y: padT + ((p.avg_pace - yMin) / (yMax - yMin)) * ch,
+            }));
+
+            // Area fill
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) {
+                const cpx = (pts[i-1].x + pts[i].x) / 2;
+                ctx.bezierCurveTo(cpx, pts[i-1].y, cpx, pts[i].y, pts[i].x, pts[i].y);
+            }
+            ctx.lineTo(pts[pts.length-1].x, padT + ch);
+            ctx.lineTo(pts[0].x, padT + ch);
+            ctx.closePath();
+            const grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
+            grad.addColorStop(0, 'rgba(240,145,58,0.08)');
+            grad.addColorStop(1, 'rgba(240,145,58,0.005)');
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Line with glow
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) {
+                const cpx = (pts[i-1].x + pts[i].x) / 2;
+                ctx.bezierCurveTo(cpx, pts[i-1].y, cpx, pts[i].y, pts[i].x, pts[i].y);
+            }
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = 'rgba(240,145,58,0.4)';
+            ctx.strokeStyle = '#f0913a';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // End dot
+            const last = pts[pts.length - 1];
+            ctx.beginPath();
+            ctx.arc(last.x, last.y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#f0913a';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = 'rgba(240,145,58,0.6)';
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Date labels on X axis
+            const labelEvery = Math.max(1, Math.floor(points.length / 5));
+            ctx.font = '500 8px "Barlow", sans-serif';
+            ctx.fillStyle = 'rgba(90,86,112,0.6)';
+            ctx.textAlign = 'center';
+            points.forEach((p, i) => {
+                if (i % labelEvery === 0 || i === points.length - 1) {
+                    const d = new Date(p.date + 'T00:00:00');
+                    ctx.fillText(MONTH_NAMES[d.getMonth()] + ' ' + d.getDate(), pts[i].x, h - 4);
+                }
+            });
+        }
+
+        /* ── Calendar Heatmap ── */
+        function renderCalendar(data) {
+            const dataMap = {};
+            let maxM = 0;
+            data.forEach(d => {
+                dataMap[d.date] = d.total_meters;
+                if (d.total_meters > maxM) maxM = d.total_meters;
+            });
+
+            const today = new Date();
+            const todayStr = dateStr(today);
+            const thisMonday = mondayOf(today);
+            const startMonday = addDays(thisMonday, -(WEEKS - 1) * 7);
+
+            const grid = $('calGrid');
+            const monthsEl = $('calMonths');
+            const dayLabelsEl = $('calDayLabels');
+            grid.innerHTML = '';
+            monthsEl.innerHTML = '';
+            dayLabelsEl.innerHTML = '';
+
+            // Compute cell size to fill available width
+            const mainEl = grid.parentElement;
+            const availW = mainEl.clientWidth;
+            let cs = Math.floor((availW - (WEEKS - 1) * CAL_GAP) / WEEKS);
+            cs = Math.max(cs, CAL_MIN_CELL);
+
+            grid.style.gridTemplateRows = `repeat(7, ${cs}px)`;
+            grid.style.gridAutoColumns = cs + 'px';
+            grid.style.gap = CAL_GAP + 'px';
+
+            // Day labels (Mon, Wed, Fri) — sized to match grid rows
+            const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+            for (let i = 0; i < 7; i++) {
+                const s = document.createElement('span');
+                s.style.height = cs + 'px';
+                s.style.lineHeight = cs + 'px';
+                s.textContent = (i % 2 === 0) ? dayNames[i] : '';
+                dayLabelsEl.appendChild(s);
+            }
+            dayLabelsEl.style.gap = CAL_GAP + 'px';
+            dayLabelsEl.style.paddingTop = '18px';
+
+            // Render cells (column-first via grid-auto-flow: column)
+            const colStep = cs + CAL_GAP;
+            let lastMonth = -1;
+            for (let wk = 0; wk < WEEKS; wk++) {
+                const weekMonday = addDays(startMonday, wk * 7);
+
+                // Month label
+                const monthIdx = weekMonday.getMonth();
+                if (monthIdx !== lastMonth) {
+                    const lbl = document.createElement('span');
+                    lbl.className = 'cal-month-label';
+                    lbl.textContent = MONTH_NAMES[monthIdx];
+                    lbl.style.left = (wk * colStep) + 'px';
+                    monthsEl.appendChild(lbl);
+                    lastMonth = monthIdx;
+                }
+
+                for (let day = 0; day < 7; day++) {
+                    const d = addDays(weekMonday, day);
+                    const ds = dateStr(d);
+                    const cell = document.createElement('div');
+                    cell.className = 'cal-cell';
+
+                    if (ds > todayStr) {
+                        cell.classList.add('future');
+                    } else {
+                        const meters = dataMap[ds] || 0;
+                        if (meters > 0 && maxM > 0) {
+                            const intensity = Math.pow(meters / maxM, 0.6);
+                            const alpha = 0.15 + intensity * 0.8;
+                            cell.style.background = `rgba(${ACCENT.join(',')},${alpha.toFixed(2)})`;
+                            cell.title = `${ds}: ${fmtNum(meters)}m`;
+                        }
+                    }
+                    grid.appendChild(cell);
+                }
+            }
+        }
+
+        /* ── Fetch & Render ── */
+        async function init() {
+            try {
+                const resp = await fetch('/api/summary');
+                const data = await resp.json();
+
+                if (!data.length) {
+                    document.querySelector('.page').innerHTML += '<div class="empty">No training data yet. Start rowing to see your history here.</div>';
+                    return;
+                }
+
+                renderStats(data);
+                renderVolume(data);
+                renderPace(data);
+                renderCalendar(data);
+            } catch (e) {
+                console.error('Failed to load summary:', e);
+            }
+        }
+
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(init, 150);
+        });
+
+        init();
+    })();
+    </script>
+</body>
+</html>

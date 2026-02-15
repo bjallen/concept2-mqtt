@@ -134,6 +134,7 @@ def build_message(monitor: dict, workout: dict) -> dict:
         "pace_secs": monitor.get("pace", 0),
         "watts": monitor.get("power", 0),
         "calories": monitor.get("calories", 0),
+        "cal_per_hr": round(monitor.get("calhr", 0)),
         "heart_rate": monitor.get("heartrate", 0),
         "distance_m": monitor.get("distance", 0),
         "elapsed_secs": monitor.get("time", 0),
@@ -166,7 +167,6 @@ def main():
 
     erg = find_erg()
 
-    stroke_count = 0
     last_state = None
 
     while running:
@@ -189,7 +189,6 @@ def main():
         if state != last_state:
             if state == 1:  # rowing
                 print("Workout started")
-                stroke_count = 0
                 client.publish(
                     f"{MQTT_TOPIC_PREFIX}/event",
                     json.dumps({"event": "workout_start",
@@ -207,9 +206,6 @@ def main():
         # Only publish stroke data while actively rowing
         if state == 1:
             msg = build_message(monitor, workout)
-            stroke_count += 1
-            msg["stroke_count"] = stroke_count
-
             payload = json.dumps(msg)
             client.publish(f"{MQTT_TOPIC_PREFIX}/stroke", payload)
 
