@@ -15,6 +15,7 @@ services:
     environment:
       - MQTT_BROKER=mosquitto
       - LOG_DIR=/app/data
+      - PYTHONUNBUFFERED=1
     volumes:
       - ./data:/app/data
     depends_on:

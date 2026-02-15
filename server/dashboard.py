@@ -64,6 +64,8 @@ def create_mqtt_client() -> mqtt.Client:
 
 async def _broadcast_worker():
     """Poll the thread-safe queue and broadcast to WebSocket clients."""
+    global ws_clients
+    print("Broadcast worker started", flush=True)
     while True:
         try:
             message = _msg_queue.get_nowait()
