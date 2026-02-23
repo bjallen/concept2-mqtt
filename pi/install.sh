@@ -10,9 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Installing concept2 monitor..."
 
-# System deps for pyrow (USB HID access)
+# System deps for pyrow (USB HID) and bleak (BLE heart rate)
 apt-get update -qq
-apt-get install -y -qq python3-venv python3-dev libusb-1.0-0-dev libudev-dev git
+apt-get install -y -qq python3-venv python3-dev libusb-1.0-0-dev libudev-dev git \
+  bluez bluetooth
 
 # Install app
 mkdir -p "$INSTALL_DIR"
@@ -21,6 +22,13 @@ cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
 
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q -r "$INSTALL_DIR/requirements.txt"
+
+# Ensure Bluetooth is unblocked and powered on
+rfkill unblock bluetooth
+# Persist across reboots
+if ! grep -q "rfkill unblock bluetooth" /etc/rc.local 2>/dev/null; then
+    sed -i '/^exit 0/i rfkill unblock bluetooth' /etc/rc.local 2>/dev/null || true
+fi
 
 # udev rule so pyrow can access the PM5 without root
 cat > /etc/udev/rules.d/99-concept2.rules << 'EOF'
@@ -40,6 +48,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-/etc/concept2-monitor.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=${INSTALL_DIR}/venv/bin/python ${INSTALL_DIR}/monitor.py
 Restart=always
 RestartSec=5
@@ -52,7 +61,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
+systemctl restart "$SERVICE_NAME"
 
 echo "Done! Service is running."
 echo "  Logs:    journalctl -u $SERVICE_NAME -f"

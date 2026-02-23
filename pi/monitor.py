@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Concept2 PM5 monitor — reads stroke data via USB HID and publishes to MQTT."""
 
+import asyncio
 import json
 import os
 import signal
 import socket
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -24,6 +26,9 @@ MIN_FRAME_GAP = 0.050  # minimum gap between USB commands (seconds)
 PISUGAR_HOST = "127.0.0.1"
 PISUGAR_PORT = 8423
 BATTERY_INTERVAL = 60  # seconds between battery reports
+POLAR_NAME_PREFIX = os.environ.get("POLAR_NAME", "Polar H10")
+HR_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
+HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
 # -- HID Erg wrapper ---------------------------------------------------------
 
@@ -132,6 +137,96 @@ def get_battery_status() -> dict | None:
         return None
 
 
+# -- Polar BLE HR monitor ----------------------------------------------------
+
+class PolarHRMonitor:
+    """Connects to a Polar H10 over BLE and reads heart rate notifications."""
+
+    def __init__(self):
+        self._hr = 0
+        self._connected = False
+        self._lock = threading.Lock()
+        self._thread = None
+        self._stop_event = threading.Event()
+
+    @property
+    def heart_rate(self) -> int:
+        with self._lock:
+            return self._hr
+
+    @property
+    def connected(self) -> bool:
+        with self._lock:
+            return self._connected
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def _run(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._monitor_loop())
+        finally:
+            loop.close()
+
+    async def _monitor_loop(self):
+        from bleak import BleakClient, BleakScanner
+
+        while not self._stop_event.is_set():
+            try:
+                device = await self._find_device(BleakScanner)
+                if device is None:
+                    await asyncio.sleep(5)
+                    continue
+
+                print(f"Connecting to {device.name} ({device.address})...")
+                async with BleakClient(device, timeout=10) as client:
+                    with self._lock:
+                        self._connected = True
+                    print(f"Polar HR connected: {device.name}")
+
+                    await client.start_notify(HR_MEASUREMENT_UUID, self._hr_callback)
+
+                    while client.is_connected and not self._stop_event.is_set():
+                        await asyncio.sleep(1)
+
+                    await client.stop_notify(HR_MEASUREMENT_UUID)
+
+            except Exception as e:
+                print(f"Polar HR error: {e}")
+            finally:
+                with self._lock:
+                    self._connected = False
+                    self._hr = 0
+                if not self._stop_event.is_set():
+                    print("Polar HR disconnected, will retry in 5s...")
+                    await asyncio.sleep(5)
+
+    async def _find_device(self, scanner_cls):
+        print(f"Scanning for {POLAR_NAME_PREFIX}...")
+        devices = await scanner_cls.discover(timeout=5, return_adv=True)
+        for device, _adv in devices.values():
+            if device.name and device.name.startswith(POLAR_NAME_PREFIX):
+                return device
+        return None
+
+    def _hr_callback(self, _sender, data: bytearray):
+        # BLE HR Measurement format: bit 0 of flags = HR format
+        # 0 = uint8 at byte 1, 1 = uint16 at bytes 1-2
+        flags = data[0]
+        if flags & 0x01:
+            hr = int.from_bytes(data[1:3], "little")
+        else:
+            hr = data[1]
+        with self._lock:
+            self._hr = hr
+
+
 # -- Helpers -----------------------------------------------------------------
 
 def find_erg():
@@ -155,8 +250,10 @@ def find_erg():
             time.sleep(1)
 
 
-def build_message(monitor: dict, workout: dict) -> dict:
+def build_message(monitor: dict, workout: dict, ble_hr: int = 0) -> dict:
     """Flatten into a clean JSON payload."""
+    # Prefer BLE heart rate over PM5's value (PM5 is usually 0 without ANT+)
+    hr = ble_hr if ble_hr > 0 else monitor.get("heartrate", 0)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "stroke_rate": monitor.get("spm", 0),
@@ -164,7 +261,7 @@ def build_message(monitor: dict, workout: dict) -> dict:
         "watts": monitor.get("power", 0),
         "calories": monitor.get("calories", 0),
         "cal_per_hr": round(monitor.get("calhr", 0)),
-        "heart_rate": monitor.get("heartrate", 0),
+        "heart_rate": hr,
         "distance_m": monitor.get("distance", 0),
         "elapsed_secs": monitor.get("time", 0),
         "workout_type": workout.get("type", ""),
@@ -193,6 +290,10 @@ def main():
     client.loop_start()
     client.publish(f"{MQTT_TOPIC_PREFIX}/status", "online", retain=True)
     print(f"MQTT connected to {MQTT_BROKER}:{MQTT_PORT}")
+
+    # Start BLE heart rate monitor in background
+    polar = PolarHRMonitor()
+    polar.start()
 
     erg = find_erg()
 
@@ -235,7 +336,7 @@ def main():
 
         # Only publish stroke data while actively rowing
         if state == 1:
-            msg = build_message(monitor, workout)
+            msg = build_message(monitor, workout, ble_hr=polar.heart_rate)
             payload = json.dumps(msg)
             client.publish(f"{MQTT_TOPIC_PREFIX}/stroke", payload)
 
@@ -261,6 +362,7 @@ def main():
         time.sleep(POLL_INTERVAL)
 
     # Cleanup
+    polar.stop()
     client.publish(f"{MQTT_TOPIC_PREFIX}/status", "offline", retain=True)
     client.loop_stop()
     client.disconnect()
