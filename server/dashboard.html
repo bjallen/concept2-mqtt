@@ -299,16 +299,7 @@
         .m-spm .metric-val { color: var(--spm-color); }
         .m-spm .metric-lbl { color: color-mix(in srgb, var(--spm-color) 50%, transparent); }
 
-        .m-hr .metric-val { color: var(--hr-color); }
-        .m-hr .metric-lbl { color: color-mix(in srgb, var(--hr-color) 50%, transparent); }
-
-        /* Heartbeat pulse for HR */
-        @keyframes heartbeat {
-            0%, 100% { transform: scale(1); }
-            12% { transform: scale(1.1); }
-            28% { transform: scale(1); }
-        }
-        .m-hr .metric-val.beat { animation: heartbeat 0.35s ease; }
+        /* (HR styling in sidebar section below) */
 
         /* Chart */
         .chart-wrap {
@@ -373,30 +364,148 @@
             border-bottom: 1px solid rgba(248, 113, 113, 0.15);
         }
 
+        /* Sidebar metrics (stacked vertically) */
+        .dash-body {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .dash-sidebar {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 0.6rem;
+        }
+
+        .dash-main {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .sidebar-metric {
+            background: var(--surface);
+            padding: 0.7rem 0.4rem;
+            text-align: center;
+        }
+
+        .sidebar-val {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 1.55rem;
+            font-weight: 700;
+            line-height: 1.2;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+            transition: transform 0.12s ease;
+        }
+
+        .sidebar-val.bump { transform: scale(1.06); }
+
+        .sidebar-lbl {
+            font-size: 0.58rem;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-top: 0.2rem;
+        }
+
+        .dash-sidebar .m-hr .sidebar-val { color: var(--hr-color); }
+        .dash-sidebar .m-hr .sidebar-lbl { color: color-mix(in srgb, var(--hr-color) 50%, transparent); }
+
+        /* Heartbeat pulse for HR */
+        @keyframes heartbeat {
+            0%, 100% { transform: scale(1); }
+            12% { transform: scale(1.1); }
+            28% { transform: scale(1); }
+        }
+        .m-hr .sidebar-val.beat { animation: heartbeat 0.35s ease; }
+
         /* Entrance animations */
         @keyframes slide-up {
             from { opacity: 0; transform: translateY(12px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
-        #dashboard.entering .hero { animation: slide-up 0.45s ease both; }
-        #dashboard.entering .metrics-row:first-of-type { animation: slide-up 0.45s ease 0.08s both; }
+        #dashboard.entering .dash-sidebar { animation: slide-up 0.45s ease both; }
+        #dashboard.entering .hero { animation: slide-up 0.45s ease 0.08s both; }
         #dashboard.entering .chart-wrap { animation: slide-up 0.45s ease 0.16s both; }
-        #dashboard.entering .metrics-row:last-of-type { animation: slide-up 0.45s ease 0.24s both; }
+        #dashboard.entering .metrics-row { animation: slide-up 0.45s ease 0.24s both; }
 
-        /* Responsive */
+        /* Responsive — portrait / small screens */
         @media (max-width: 480px) {
             .screen { padding: 0.9rem; }
             .pace-value { font-size: clamp(4.2rem, 22vw, 7rem); }
             .metric-val { font-size: 1.3rem; }
+            .sidebar-val { font-size: 1.3rem; }
             .metric { padding: 0.55rem 0.3rem; }
+            .sidebar-metric { padding: 0.55rem 0.3rem; }
             .chart-wrap { min-height: 90px; }
         }
 
-        @media (min-width: 1024px) {
-            .screen { max-width: 800px; }
-            .metric-val { font-size: 1.75rem; }
-            .metric { padding: 0.9rem 0.5rem; }
+        /* Landscape / wide screens — two-column layout */
+        @media (min-width: 900px) {
+            #dashboard {
+                max-width: 100%;
+                padding: 0.75rem 1.5rem;
+            }
+
+            .dash-body {
+                flex-direction: row;
+                gap: 1rem;
+            }
+
+            .dash-sidebar {
+                display: flex;
+                flex-direction: column;
+                width: 200px;
+                flex-shrink: 0;
+                gap: 1px;
+                margin-bottom: 0;
+            }
+
+            .sidebar-metric {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                padding: 1rem 0.75rem;
+            }
+
+            .sidebar-val {
+                font-size: 2.2rem;
+            }
+
+            .sidebar-lbl {
+                font-size: 0.65rem;
+            }
+
+            .dash-main {
+                flex: 1;
+            }
+
+            .hero {
+                padding: 0.5rem 0 0.5rem;
+            }
+
+            .pace-value {
+                font-size: clamp(5rem, 12vw, 9rem);
+            }
+
+            .chart-wrap {
+                flex: 1;
+                min-height: 140px;
+            }
+
+            .metric-val { font-size: 1.5rem; }
+            .metric { padding: 0.7rem 0.5rem; }
         }
     </style>
 </head>
@@ -436,45 +545,51 @@
             </div>
         </div>
 
-        <div class="hero">
-            <div class="pace-value" id="pace">-:--</div>
-            <div class="pace-unit">/500m</div>
-        </div>
+        <div class="dash-body">
+            <!-- Sidebar: cumulative stats -->
+            <div class="dash-sidebar">
+                <div class="sidebar-metric">
+                    <div class="sidebar-val" id="distance">0</div>
+                    <div class="sidebar-lbl">Meters</div>
+                </div>
+                <div class="sidebar-metric">
+                    <div class="sidebar-val" id="calories">0</div>
+                    <div class="sidebar-lbl">Calories</div>
+                </div>
+                <div class="sidebar-metric m-hr">
+                    <div class="sidebar-val" id="hr">&mdash;</div>
+                    <div class="sidebar-lbl">Heart Rate</div>
+                </div>
+            </div>
 
-        <div class="metrics-row">
-            <div class="metric m-watts">
-                <div class="metric-val" id="watts">&mdash;</div>
-                <div class="metric-lbl">Watts</div>
-            </div>
-            <div class="metric m-spm">
-                <div class="metric-val" id="spm">&mdash;</div>
-                <div class="metric-lbl">Strokes/min</div>
-            </div>
-            <div class="metric m-hr">
-                <div class="metric-val" id="hr">&mdash;</div>
-                <div class="metric-lbl">Heart Rate</div>
-            </div>
-        </div>
+            <!-- Main: real-time pace + chart -->
+            <div class="dash-main">
+                <div class="hero">
+                    <div class="pace-value" id="pace">-:--</div>
+                    <div class="pace-unit">/500m</div>
+                </div>
 
-        <div class="chart-wrap">
-            <div class="chart-head">Pace Trend</div>
-            <div class="chart-body">
-                <canvas id="chart" class="chart-canvas"></canvas>
-            </div>
-        </div>
+                <div class="chart-wrap">
+                    <div class="chart-head">Pace Trend</div>
+                    <div class="chart-body">
+                        <canvas id="chart" class="chart-canvas"></canvas>
+                    </div>
+                </div>
 
-        <div class="metrics-row">
-            <div class="metric">
-                <div class="metric-val" id="distance">0</div>
-                <div class="metric-lbl">Meters</div>
-            </div>
-            <div class="metric">
-                <div class="metric-val" id="calories">0</div>
-                <div class="metric-lbl">Calories</div>
-            </div>
-            <div class="metric">
-                <div class="metric-val" id="calhr">0</div>
-                <div class="metric-lbl">Cal/hr</div>
+                <div class="metrics-row">
+                    <div class="metric m-watts">
+                        <div class="metric-val" id="watts">&mdash;</div>
+                        <div class="metric-lbl">Watts</div>
+                    </div>
+                    <div class="metric m-spm">
+                        <div class="metric-val" id="spm">&mdash;</div>
+                        <div class="metric-lbl">Strokes/min</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-val" id="calhr">0</div>
+                        <div class="metric-lbl">Cal/hr</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
