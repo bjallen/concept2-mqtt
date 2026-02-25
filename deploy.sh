@@ -1,49 +1,54 @@
 #!/usr/bin/env bash
-# Deploy concept2-mqtt to the server and Pi from this machine.
+# Deploy concept2-mqtt to the Mac Mini.
 # Usage: bash deploy.sh
 
 set -euo pipefail
 
 SERVER="${CONCEPT2_SERVER:-mac-mini-server.local}"
-PI="${CONCEPT2_PI:-pirow.local}"
-PI_USER="${CONCEPT2_PI_USER:-bjallen}"
 SERVER_USER="${1:-$(whoami)}"
+DEPLOY_DIR="~/Sites/concept2-mqtt"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Deploying to server ($SERVER) ==="
+echo "=== Deploying to $SERVER ==="
+
+# Sync server files (dashboard, Docker)
+echo "Syncing server files..."
 rsync -az --delete \
   --exclude 'data/' \
-  "$SCRIPT_DIR/server/" "$SERVER_USER@$SERVER:~/concept2-mqtt/"
+  "$SCRIPT_DIR/server/" "$SERVER_USER@$SERVER:$DEPLOY_DIR/"
+
+# Sync monitor files
+echo "Syncing monitor files..."
+rsync -az \
+  --exclude '__pycache__/' \
+  "$SCRIPT_DIR/pi/monitor.py" \
+  "$SCRIPT_DIR/pi/requirements.txt" \
+  "$SCRIPT_DIR/pi/test_polar.py" \
+  "$SERVER_USER@$SERVER:$DEPLOY_DIR/"
+
+# Install/update launchd plist
+echo "Updating launchd plist..."
+scp "$SCRIPT_DIR/pi/com.concept2.monitor.plist" \
+  "$SERVER_USER@$SERVER:~/Library/LaunchAgents/com.concept2.monitor.plist"
+
+# Rebuild containers and restart monitor
 ssh "$SERVER_USER@$SERVER" bash -s << 'EOF'
 set -euo pipefail
-cd ~/concept2-mqtt
+cd ~/Sites/concept2-mqtt
+
+# Rebuild dashboard container
 docker compose up -d --build
 echo "Containers running:"
 docker compose ps
-EOF
-echo "Server done."
 
-echo ""
-echo "=== Deploying to Pi ($PI) ==="
-scp -r "$SCRIPT_DIR/pi" "$PI_USER@$PI:/tmp/concept2-pi"
-ssh "$PI_USER@$PI" MQTT_BROKER="$SERVER" bash -s << 'DEPLOY_EOF'
-set -euo pipefail
-mkdir -p ~/concept2-monitor
-cp -r /tmp/concept2-pi/* ~/concept2-monitor/
-rm -rf /tmp/concept2-pi
-
-# Write env file for the systemd service
-sudo tee /etc/concept2-monitor.env > /dev/null << EOF
-MQTT_BROKER=${MQTT_BROKER}
+# Restart monitor
+launchctl stop com.concept2.monitor 2>/dev/null || true
+sleep 1
+echo "Monitor restarted (PID: $(launchctl list | grep concept2.monitor | awk '{print $1}'))"
 EOF
 
-cd ~/concept2-monitor
-sudo bash install.sh
-DEPLOY_EOF
-echo "Pi done."
-
 echo ""
-echo "=== All deployed ==="
+echo "=== Deployed ==="
 echo "  Dashboard: http://$SERVER/"
-echo "  Pi logs:   ssh $PI_USER@$PI 'journalctl -u concept2-monitor -f'"
+echo "  Monitor:   ssh $SERVER_USER@$SERVER 'tail -f $DEPLOY_DIR/monitor.log'"
