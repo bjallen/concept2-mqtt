@@ -16,13 +16,14 @@ import paho.mqtt.client as mqtt
 from pyrow.csafe import csafe_cmd
 
 # -- Config ------------------------------------------------------------------
-MQTT_BROKER = os.environ.get("MQTT_BROKER", "mac-mini-server.local")
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_TOPIC_PREFIX = "concept2"
 POLL_INTERVAL = 0.25  # seconds between reads
 C2_VENDOR_ID = 0x17A4
 C2_PRODUCT_ID = 0x0003
 MIN_FRAME_GAP = 0.050  # minimum gap between USB commands (seconds)
+PISUGAR_ENABLED = sys.platform == "linux"  # PiSugar only exists on the Pi
 PISUGAR_HOST = "127.0.0.1"
 PISUGAR_PORT = 8423
 BATTERY_INTERVAL = 60  # seconds between battery reports
@@ -185,12 +186,13 @@ class PolarHRMonitor:
                     continue
 
                 print(f"Connecting to {device.name} ({device.address})...")
-                async with BleakClient(device, timeout=10) as client:
+                async with BleakClient(device, timeout=30) as client:
                     with self._lock:
                         self._connected = True
                     print(f"Polar HR connected: {device.name}")
 
                     await client.start_notify(HR_MEASUREMENT_UUID, self._hr_callback)
+                    print("Polar HR: receiving heart rate data")
 
                     while client.is_connected and not self._stop_event.is_set():
                         await asyncio.sleep(1)
@@ -198,7 +200,7 @@ class PolarHRMonitor:
                     await client.stop_notify(HR_MEASUREMENT_UUID)
 
             except Exception as e:
-                print(f"Polar HR error: {e}")
+                print(f"Polar HR error: {type(e).__name__}: {e!r}")
             finally:
                 with self._lock:
                     self._connected = False
@@ -350,14 +352,15 @@ def main():
                 f"HR:{msg['heart_rate']}"
             )
 
-        # Periodic battery status
-        now = time.monotonic()
-        if now - last_battery_check >= BATTERY_INTERVAL:
-            last_battery_check = now
-            battery = get_battery_status()
-            if battery:
-                battery["timestamp"] = datetime.now(timezone.utc).isoformat()
-                client.publish(f"{MQTT_TOPIC_PREFIX}/battery", json.dumps(battery), retain=True)
+        # Periodic battery status (Pi only — PiSugar hardware)
+        if PISUGAR_ENABLED:
+            now = time.monotonic()
+            if now - last_battery_check >= BATTERY_INTERVAL:
+                last_battery_check = now
+                battery = get_battery_status()
+                if battery:
+                    battery["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    client.publish(f"{MQTT_TOPIC_PREFIX}/battery", json.dumps(battery), retain=True)
 
         time.sleep(POLL_INTERVAL)
 
