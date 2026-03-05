@@ -770,6 +770,10 @@
                 renderVolume(data);
                 renderPace(data);
                 renderCalendar(data);
+
+                // Scroll heatmap to show current date (rightmost)
+                const calScroll = document.querySelector('.cal-scroll');
+                if (calScroll) calScroll.scrollLeft = calScroll.scrollWidth;
             } catch (e) {
                 console.error('Failed to load summary:', e);
             }
