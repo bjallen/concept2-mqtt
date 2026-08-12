@@ -20,6 +20,10 @@ MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_TOPIC_PREFIX = "concept2"
 POLL_INTERVAL = 0.25  # seconds between reads
+# How long the erg may go without a good read before we assume it's gone
+# (e.g. powered off) and reconnect. Time-based, not a retry count, because a
+# failed read costs anywhere from ~0s (fast parse error) to ~6s (read timeout).
+ERG_UNRESPONSIVE_SECS = 6.0
 C2_VENDOR_ID = 0x17A4
 C2_PRODUCT_ID = 0x0003
 MIN_FRAME_GAP = 0.050  # minimum gap between USB commands (seconds)
@@ -231,10 +235,14 @@ class PolarHRMonitor:
 
 # -- Helpers -----------------------------------------------------------------
 
-def find_erg():
-    """Block until a PM5 is connected via USB HID."""
+def find_erg(stop_event=None):
+    """Block until a PM5 is connected via USB HID.
+
+    Returns an Erg, or None if stop_event is set before one is found (so
+    shutdown isn't blocked waiting for hardware that may never appear).
+    """
     print("Searching for Concept2 PM5...")
-    while True:
+    while stop_event is None or not stop_event.is_set():
         try:
             dev = hid.device()
             dev.open(C2_VENDOR_ID, C2_PRODUCT_ID)
@@ -250,6 +258,16 @@ def find_erg():
             return Erg(dev)
         except OSError:
             time.sleep(1)
+    return None
+
+
+def reconnect_erg(erg, stop_event=None):
+    """Close a dead erg handle (best-effort) and block until one reconnects."""
+    try:
+        erg.close()
+    except Exception:
+        pass  # handle is already dead; nothing to salvage
+    return find_erg(stop_event)
 
 
 def build_message(monitor: dict, workout: dict, ble_hr: int = 0) -> dict:
@@ -275,12 +293,11 @@ def build_message(monitor: dict, workout: dict, ble_hr: int = 0) -> dict:
 # -- Main loop ---------------------------------------------------------------
 
 def main():
-    running = True
+    stop_event = threading.Event()
 
     def shutdown(sig, frame):
-        nonlocal running
         print("\nShutting down...")
-        running = False
+        stop_event.set()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
@@ -297,24 +314,38 @@ def main():
     polar = PolarHRMonitor()
     polar.start()
 
-    erg = find_erg()
+    erg = find_erg(stop_event)
 
     last_state = None
     last_battery_check = 0.0
+    last_good_read = time.monotonic()
 
-    while running:
+    while erg is not None and not stop_event.is_set():
         try:
             monitor = erg.get_monitor()
             workout = erg.get_workout()
         except OSError:
-            # USB device disconnected
+            # USB device cleanly disconnected
             print("Lost USB connection to erg")
-            erg.close()
-            erg = find_erg()
+            erg = reconnect_erg(erg, stop_event)
+            last_good_read = time.monotonic()
+            last_state = None
             continue
-        except (TimeoutError, KeyError, ValueError, TypeError):
-            # Transient read error — retry without reconnecting
+        except (TimeoutError, KeyError, ValueError, TypeError) as e:
+            # Transient read error. Back off so a fast-failing read (e.g. a
+            # parse error that returns immediately) can't busy-spin the CPU,
+            # and if the erg stays unresponsive treat it as gone and reconnect
+            # — a powered-off erg yields empty/garbage reads rather than a clean
+            # OSError, which would otherwise wedge us in a hot loop forever.
+            time.sleep(POLL_INTERVAL)
+            if time.monotonic() - last_good_read >= ERG_UNRESPONSIVE_SECS:
+                print(f"Erg unresponsive for ~{ERG_UNRESPONSIVE_SECS:.0f}s "
+                      f"({type(e).__name__}); reconnecting")
+                erg = reconnect_erg(erg, stop_event)
+                last_good_read = time.monotonic()
+                last_state = None
             continue
+        last_good_read = time.monotonic()
 
         state = workout.get("state", 0)
 
@@ -369,7 +400,11 @@ def main():
     client.publish(f"{MQTT_TOPIC_PREFIX}/status", "offline", retain=True)
     client.loop_stop()
     client.disconnect()
-    erg.close()
+    if erg is not None:
+        try:
+            erg.close()
+        except Exception:
+            pass
     print("Done.")
 
 
