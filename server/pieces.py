@@ -16,7 +16,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-STALL_SECS = 30
+# A piece ends on workout_end or a distance reset. A pause (strokes stop, or
+# keep coming with the distance flat) never ends it: the PM5's totals run on
+# through a pause, so splitting there would give the second half the whole
+# row's meters. Only a rower left idle this long is finished on its own.
+IDLE_FINISH_SECS = 600
 MIN_SECS = 60
 MIN_METERS = 100
 SAMPLE_SPACING = 5
@@ -57,7 +61,7 @@ def summarize(strokes: list) -> dict:
         "elapsed_seconds": elapsed,
         "avg_pace_seconds": elapsed / (meters / 500) if meters else None,
         "avg_watts": sum(watts) / len(watts) if watts else None,
-        "avg_heart_rate": sum(hrs) / len(hrs) if hrs else None,
+        "avg_heart_rate": round(sum(hrs) / len(hrs)) if hrs else None,
         "max_heart_rate": max(hrs) if hrs else None,
         "strokes": rows,
     }
@@ -104,10 +108,13 @@ class PieceDetector:
         return self._finish()
 
     def tick(self, now: datetime):
+        """Finish a piece only once the rower has sat idle IDLE_FINISH_SECS since
+        the last distance increase, trimming the flat tail. Shorter pauses keep
+        the piece open: rowing on continues it."""
         if self._last_inc < 0:
             return None
         last = _parse(self._buf[self._last_inc]["timestamp"])
-        if (now - last).total_seconds() >= STALL_SECS:
+        if (now - last).total_seconds() >= IDLE_FINISH_SECS:
             return self._finish(upto=self._last_inc)
         return None
 
@@ -138,6 +145,13 @@ class Outbox:
 
     def add(self, summary: dict):
         with self._lock, self.path.open("a") as f:
+            # A crash mid-append leaves a torn last line with no newline; start
+            # a fresh line so this entry isn't glued onto it and lost with it.
+            if self.path.stat().st_size > 0:
+                with self.path.open("rb") as r:
+                    r.seek(-1, os.SEEK_END)
+                    if r.read(1) != b"\n":
+                        f.write("\n")
             f.write(json.dumps(summary) + "\n")
             f.flush()
             os.fsync(f.fileno())
@@ -157,7 +171,17 @@ class Outbox:
             tmp.replace(self.path)
 
 
-def post_piece(summary, url, token, opener=urllib.request.urlopen) -> bool:
+POSTED, RETRY, REJECTED = "posted", "retry", "rejected"
+
+# 4xx answers that can heal without the piece changing: auth (a token being
+# rotated), a route the fitness server hasn't deployed yet, timeouts and
+# throttling. Any other 4xx is the server refusing this piece for good.
+RETRYABLE_4XX = {401, 403, 404, 408, 429}
+
+
+def post_piece(summary, url, token, opener=urllib.request.urlopen) -> str:
+    """POSTED on 200/201; REJECTED on a permanent 4xx (see RETRYABLE_4XX);
+    RETRY for everything else, network errors included."""
     req = urllib.request.Request(
         url.rstrip("/") + "/api/v1/erg_pieces",
         data=json.dumps(summary).encode(),
@@ -169,14 +193,16 @@ def post_piece(summary, url, token, opener=urllib.request.urlopen) -> bool:
             status = resp.getcode()
     except urllib.error.HTTPError as e:
         print(f"post failed: HTTP {e.code} for {summary.get('piece_key')}", flush=True)
-        return False
+        if 400 <= e.code < 500 and e.code not in RETRYABLE_4XX:
+            return REJECTED
+        return RETRY
     except Exception as e:  # network, bad URL, anything: the sender must survive
         print(f"post failed: {type(e).__name__}: {e}", flush=True)
-        return False
+        return RETRY
     if status in (200, 201):
-        return True
+        return POSTED
     print(f"post failed: HTTP {status} for {summary.get('piece_key')}", flush=True)
-    return False
+    return RETRY
 
 
 def load_env(path) -> dict:
@@ -198,8 +224,10 @@ class Reporter:
     local file append only); all network I/O happens in flush(), which never takes
     the detector lock."""
 
-    def __init__(self, outbox, url, token, opener=urllib.request.urlopen):
+    def __init__(self, outbox, url, token, opener=urllib.request.urlopen, dead=None):
         self.outbox, self.url, self.token, self.opener = outbox, url, token, opener
+        # Pieces the server refused for good, kept (never retried, never dropped).
+        self.dead = dead or Outbox(outbox.path.with_name("pieces-dead.jsonl"))
         self.detector = PieceDetector()
         self._lock = threading.Lock()
         self._flush_lock = threading.Lock()
@@ -227,10 +255,14 @@ class Reporter:
         with self._flush_lock:
             for piece in self.outbox.pending():
                 try:
-                    ok = post_piece(piece, self.url, self.token, opener=self.opener)
-                    if ok:
+                    result = post_piece(piece, self.url, self.token, opener=self.opener)
+                    if result == POSTED:
                         self.outbox.remove(piece["piece_key"])
                         print(f"posted {piece['piece_key']}", flush=True)
+                    elif result == REJECTED:
+                        self.dead.add(piece)
+                        self.outbox.remove(piece["piece_key"])
+                        print(f"dead-lettered {piece['piece_key']} to {self.dead.path.name}", flush=True)
                 except Exception as e:
                     print(f"flush error: {type(e).__name__}: {e}", flush=True)
 
@@ -250,6 +282,7 @@ def main():
         Outbox(here / "pieces-outbox.jsonl"),
         env.get("FITNESS_URL", "http://127.0.0.1:8082"),
         env.get("FITNESS_TOKEN", ""),
+        dead=Outbox(here / "pieces-dead.jsonl"),
     )
     broker = env.get("MQTT_BROKER", "localhost")
 
