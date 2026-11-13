@@ -243,7 +243,7 @@ def test_detector_never_blocks_on_posting(tmp_path):
     assert sender.is_alive()
     release.set()
     sender.join(5)
-    assert len(ob.pending()) == 1  # only the second piece (closed by tick? not yet stalled)
+    assert ob.pending() == []  # released: the first piece posted and was removed
 
 
 def test_offset_timestamp_is_normalized_to_utc():
