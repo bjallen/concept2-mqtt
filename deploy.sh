@@ -20,6 +20,9 @@ rsync -az --delete \
   --exclude '*.log' \
   --exclude 'monitor.py' \
   --exclude 'test_polar.py' \
+  --exclude 'pieces.env' \
+  --exclude 'pieces-outbox.jsonl' \
+  --exclude 'pieces-dead.jsonl' \
   "$SCRIPT_DIR/server/" "$SERVER_USER@$SERVER:$DEPLOY_DIR/"
 
 # Sync monitor files
@@ -36,6 +39,8 @@ scp "$SCRIPT_DIR/pi/requirements.txt" \
   "$SERVER_USER@$SERVER:$DEPLOY_DIR/monitor-requirements.txt"
 scp "$SCRIPT_DIR/pi/com.concept2.monitor.plist" \
   "$SERVER_USER@$SERVER:~/Library/LaunchAgents/com.concept2.monitor.plist"
+scp "$SCRIPT_DIR/server/com.concept2.pieces.plist" \
+  "$SERVER_USER@$SERVER:~/Library/LaunchAgents/com.concept2.pieces.plist"
 
 # Rebuild containers, set up venv, restart monitor
 ssh "$SERVER_USER@$SERVER" bash -s << 'EOF'
@@ -61,6 +66,20 @@ fi
 launchctl stop com.concept2.monitor 2>/dev/null || true
 sleep 1
 echo "Monitor restarted (PID: $(launchctl list | grep concept2.monitor | awk '{print $1}'))"
+
+# (Re)load the piece reporter. pieces.env (FITNESS_TOKEN) is placed by hand.
+if [ ! -f pieces.env ]; then
+    echo "WARNING: ~/Sites/concept2-mqtt/pieces.env is missing; pieces.py cannot post until it holds FITNESS_TOKEN=..." >&2
+fi
+# bootout returns before launchd has fully torn the job down, and a bootstrap
+# straight after it can race (fails, or leaves the job loaded but never run).
+# Pause, then kickstart: deterministic on a loaded job, unlike RunAtLoad. Same
+# fix as the fitness repo's deploy/deploy-rails.sh.
+launchctl bootout gui/$(id -u)/com.concept2.pieces 2>/dev/null || true
+sleep 1
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.concept2.pieces.plist
+launchctl kickstart -k gui/$(id -u)/com.concept2.pieces
+echo "Pieces reporter loaded"
 EOF
 
 echo ""
