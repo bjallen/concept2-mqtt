@@ -7,6 +7,7 @@ The bridge's own JSONL logging (consumer.py) is untouched.
 """
 
 import json
+import os
 import sys
 import threading
 import time
@@ -112,30 +113,48 @@ class PieceDetector:
 
 
 class Outbox:
+    """JSONL queue. Corrupt lines are kept verbatim (never parsed, never dropped)."""
+
     def __init__(self, path):
         self.path = Path(path)
+        self._lock = threading.RLock()
 
-    def pending(self) -> list:
+    def _lines(self) -> list:
         if not self.path.exists():
             return []
-        out = []
-        for line in self.path.read_text().splitlines():
-            if line.strip():
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-        return out
+        return [ln for ln in self.path.read_text().splitlines() if ln.strip()]
+
+    @staticmethod
+    def _parse(line):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    def pending(self) -> list:
+        with self._lock:
+            return [o for o in (self._parse(ln) for ln in self._lines()) if o is not None]
 
     def add(self, summary: dict):
-        with self.path.open("a") as f:
+        with self._lock, self.path.open("a") as f:
             f.write(json.dumps(summary) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def remove(self, piece_key: str):
-        keep = [p for p in self.pending() if p.get("piece_key") != piece_key]
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text("".join(json.dumps(p) + "\n" for p in keep))
-        tmp.replace(self.path)
+        with self._lock:
+            keep = []
+            for ln in self._lines():
+                obj = self._parse(ln)
+                if obj is None or obj.get("piece_key") != piece_key:
+                    keep.append(ln)
+            tmp = self.path.with_suffix(".tmp")
+            with tmp.open("w") as f:
+                f.write("".join(ln + "\n" for ln in keep))
+                f.flush()
+                os.fsync(f.fileno())
+            tmp.replace(self.path)
 
 
 def post_piece(summary, url, token, opener=urllib.request.urlopen) -> bool:
@@ -147,9 +166,17 @@ def post_piece(summary, url, token, opener=urllib.request.urlopen) -> bool:
     )
     try:
         with opener(req, timeout=POST_TIMEOUT) as resp:
-            return resp.getcode() in (200, 201)
-    except (urllib.error.URLError, OSError):
+            status = resp.getcode()
+    except urllib.error.HTTPError as e:
+        print(f"post failed: HTTP {e.code} for {summary.get('piece_key')}", flush=True)
         return False
+    except Exception as e:  # network, bad URL, anything: the sender must survive
+        print(f"post failed: {type(e).__name__}: {e}", flush=True)
+        return False
+    if status in (200, 201):
+        return True
+    print(f"post failed: HTTP {status} for {summary.get('piece_key')}", flush=True)
+    return False
 
 
 def load_env(path) -> dict:
@@ -166,29 +193,65 @@ def load_env(path) -> dict:
     return env
 
 
+class Reporter:
+    """Detector + outbox + sender. The on_* / tick methods are fast (detector lock,
+    local file append only); all network I/O happens in flush(), which never takes
+    the detector lock."""
+
+    def __init__(self, outbox, url, token, opener=urllib.request.urlopen):
+        self.outbox, self.url, self.token, self.opener = outbox, url, token, opener
+        self.detector = PieceDetector()
+        self._lock = threading.Lock()
+        self._flush_lock = threading.Lock()
+        self.wake = threading.Event()
+
+    def _handle(self, summary):
+        if summary:
+            self.outbox.add(summary)
+            print(f"piece {summary['piece_key']} {summary['meters']}m", flush=True)
+            self.wake.set()
+
+    def on_stroke(self, payload):
+        with self._lock:
+            self._handle(self.detector.stroke(payload))
+
+    def on_event(self, payload):
+        with self._lock:
+            self._handle(self.detector.event(payload))
+
+    def tick(self, now=None):
+        with self._lock:
+            self._handle(self.detector.tick(now or datetime.now(timezone.utc)))
+
+    def flush(self):
+        with self._flush_lock:
+            for piece in self.outbox.pending():
+                try:
+                    ok = post_piece(piece, self.url, self.token, opener=self.opener)
+                    if ok:
+                        self.outbox.remove(piece["piece_key"])
+                        print(f"posted {piece['piece_key']}", flush=True)
+                except Exception as e:
+                    print(f"flush error: {type(e).__name__}: {e}", flush=True)
+
+    def sender_loop(self, stop: threading.Event):
+        while not stop.is_set():
+            self.flush()
+            self.wake.wait(RETRY_SECS)
+            self.wake.clear()
+
+
 def main():
     import paho.mqtt.client as mqtt
 
     here = Path(__file__).parent
     env = load_env(here / "pieces.env")
-    url = env.get("FITNESS_URL", "http://127.0.0.1:8082")
-    token = env.get("FITNESS_TOKEN", "")
+    reporter = Reporter(
+        Outbox(here / "pieces-outbox.jsonl"),
+        env.get("FITNESS_URL", "http://127.0.0.1:8082"),
+        env.get("FITNESS_TOKEN", ""),
+    )
     broker = env.get("MQTT_BROKER", "localhost")
-    outbox = Outbox(here / "pieces-outbox.jsonl")
-    detector = PieceDetector()
-    lock = threading.Lock()
-
-    def flush():
-        for piece in outbox.pending():
-            if post_piece(piece, url, token):
-                outbox.remove(piece["piece_key"])
-                print(f"posted {piece['piece_key']}", flush=True)
-
-    def handle(summary):
-        if summary:
-            outbox.add(summary)
-            print(f"piece {summary['piece_key']} {summary['meters']}m", flush=True)
-            flush()
 
     def on_connect(client, userdata, flags, rc, properties=None):
         client.subscribe("concept2/#")
@@ -200,31 +263,42 @@ def main():
             return
         if not isinstance(payload, dict):
             return
-        with lock:
+        try:
             if msg.topic.endswith("/stroke"):
-                handle(detector.stroke(payload))
+                reporter.on_stroke(payload)
             elif msg.topic.endswith("/event"):
-                handle(detector.event(payload))
+                reporter.on_event(payload)
+        except Exception as e:
+            print(f"handler error: {type(e).__name__}: {e}", flush=True)
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
     client.on_message = on_message
-    client.connect(broker, 1883)
+    delay = 1
+    while True:
+        try:
+            client.connect(broker, 1883)
+            break
+        except OSError as e:
+            print(f"mqtt connect failed ({e}); retrying in {delay}s", flush=True)
+            time.sleep(delay)
+            delay = min(delay * 2, 60)
     client.loop_start()
-    flush()
-    last_retry = time.monotonic()
+    stop = threading.Event()
+    sender = threading.Thread(target=reporter.sender_loop, args=(stop,), daemon=True)
+    sender.start()
     try:
         while True:
             time.sleep(1)
-            with lock:
-                handle(detector.tick(datetime.now(timezone.utc)))
-            if time.monotonic() - last_retry >= RETRY_SECS:
-                last_retry = time.monotonic()
-                with lock:
-                    flush()
+            try:
+                reporter.tick()
+            except Exception as e:
+                print(f"tick error: {type(e).__name__}: {e}", flush=True)
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
+        reporter.wake.set()
         client.loop_stop()
         client.disconnect()
 

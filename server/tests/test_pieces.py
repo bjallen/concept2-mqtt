@@ -7,7 +7,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pieces import Outbox, PieceDetector, load_env, post_piece  # noqa: E402
+import threading
+import time
+
+from pieces import Outbox, PieceDetector, Reporter, load_env, post_piece  # noqa: E402
 
 T0 = datetime(2026, 11, 14, 15, 0, 0, tzinfo=timezone.utc)
 
@@ -176,3 +179,77 @@ def test_load_env(tmp_path):
     f.write_text("# c\nFITNESS_TOKEN=abc\n\nMQTT_BROKER = localhost\nBAD\n")
     assert load_env(f) == {"FITNESS_TOKEN": "abc", "MQTT_BROKER": "localhost"}
     assert load_env(tmp_path / "missing") == {}
+
+
+def test_corrupt_outbox_line_survives_remove(tmp_path):
+    p = tmp_path / "o.jsonl"
+    ob = Outbox(p)
+    ob.add({"piece_key": "a"})
+    with p.open("a") as f:
+        f.write("{not json\n")
+    ob.add({"piece_key": "b"})
+    ob.remove("a")
+    assert "{not json" in p.read_text()
+    assert [x["piece_key"] for x in ob.pending()] == ["b"]
+
+
+def test_failed_post_leaves_outbox_intact(tmp_path):
+    ob = Outbox(tmp_path / "o.jsonl")
+    ob.add({"piece_key": "a", "meters": 1})
+
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 401, "no", {}, io.BytesIO(b""))
+
+    r = Reporter(ob, "http://x", "t", opener=boom)
+    r.flush()
+    assert [x["piece_key"] for x in ob.pending()] == ["a"]
+    r.opener = lambda req, timeout=None: FakeResp(201)
+    r.flush()
+    assert ob.pending() == []
+
+
+def test_bad_url_does_not_kill_flush(tmp_path):
+    ob = Outbox(tmp_path / "o.jsonl")
+    ob.add({"piece_key": "a"})
+
+    def weird(req, timeout=None):
+        raise ValueError("bad url")
+
+    Reporter(ob, "nope", "t", opener=weird).flush()
+    assert len(ob.pending()) == 1
+
+
+def test_detector_never_blocks_on_posting(tmp_path):
+    ob = Outbox(tmp_path / "o.jsonl")
+    release = threading.Event()
+
+    def slow(req, timeout=None):
+        release.wait(5)
+        return FakeResp(201)
+
+    r = Reporter(ob, "http://x", "t", opener=slow)
+    feed_r = strokes(secs=300, meters=1000)
+    for p in feed_r:
+        r.on_stroke(p)
+    r.on_event({"event": "workout_end"})  # piece lands in the outbox
+    sender = threading.Thread(target=r.flush)
+    sender.start()
+    time.sleep(0.1)  # sender is now stuck inside the opener
+    t0 = time.monotonic()
+    for p in strokes(start=T0 + timedelta(seconds=1000), secs=60, meters=200):
+        r.on_stroke(p)
+    r.tick(T0 + timedelta(seconds=1060))
+    assert time.monotonic() - t0 < 1.0
+    assert sender.is_alive()
+    release.set()
+    sender.join(5)
+    assert len(ob.pending()) == 1  # only the second piece (closed by tick? not yet stalled)
+
+
+def test_offset_timestamp_is_normalized_to_utc():
+    d = PieceDetector()
+    items = strokes(start=datetime(2026, 11, 14, 20, 0, 0, tzinfo=timezone(timedelta(hours=5))), secs=120, meters=400)
+    feed(d, items)
+    s = d.event({"event": "workout_end"})
+    assert s["piece_key"] == "pm5-2026-11-14T15:00:00Z" and s["started_at"] == "2026-11-14T15:00:00Z"
+    assert s["ended_at"] == "2026-11-14T15:02:00Z"
